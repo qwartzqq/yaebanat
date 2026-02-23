@@ -5,8 +5,8 @@ import { useEffect, useRef, useState } from "react"
 
 const navLinks = [
   { href: "#features", label: "Features" },
-  { href: "#testimonials", label: "Pricing" },
-  { href: "#pricing", label: "Support" },
+  // API — модалка с докой (а не /api, потому что /api занято route handlers)
+  { href: "#api", label: "API" },
 ]
 
 type Phase = "enter" | "exit"
@@ -112,12 +112,25 @@ function GlassModal({
 
 export function Navbar() {
   const [featuresOpen, setFeaturesOpen] = useState(false)
+  const [apiOpen, setApiOpen] = useState(false)
   const [getStartedOpen, setGetStartedOpen] = useState(false)
 
   const onNavClick = (href: string) => {
+  // Внутренние страницы
+  if (href.startsWith("/")) {
+    window.location.href = href
+    return
+  }
+
   // Features — модалка
   if (href === "#features") {
     setFeaturesOpen(true)
+    return
+  }
+
+  // API — модалка
+  if (href === "#api") {
+    setApiOpen(true)
     return
   }
 
@@ -143,7 +156,7 @@ export function Navbar() {
       <header className="fixed top-0 left-0 right-0 z-[100] p-4">
         <nav className="max-w-5xl mx-auto flex items-center justify-between h-12 px-6 rounded-full bg-white/5 border border-white/10 backdrop-blur-md shadow-[0_10px_40px_rgba(0,0,0,0.4)]">
           <Link
-            href="https://t.me/oarew"
+            href="/"
             className="font-display text-xl font-semibold text-zinc-100 tracking-wide hover:text-white transition-colors"
           >
             Pale
@@ -206,6 +219,46 @@ export function Navbar() {
 		
       </GlassModal>
 
+      {/* API MODAL */}
+      <GlassModal
+        open={apiOpen}
+        onClose={() => setApiOpen(false)}
+        title="API"
+        subtitle="POST /api/lookup — summary + transactions"
+      >
+        <div className="grid gap-3">
+          <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+            <div className="text-white font-medium">Endpoint</div>
+            <div className="text-zinc-300 text-sm mt-1 font-mono break-all">POST https://palechain.sbs/api/lookup</div>
+          </div>
+
+          <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+            <div className="text-white font-medium">Headers</div>
+            <div className="text-zinc-300 text-sm mt-1 font-mono">Content-Type: application/json</div>
+          </div>
+
+          <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+            <div className="text-white font-medium">Body</div>
+            <pre className="mt-2 text-xs md:text-sm text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-3 overflow-auto">{`{\n  \"query\": \"ADDRESS\",\n  \"network\": \"AUTO\"\n}`}</pre>
+          </div>
+
+          <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+            <div className="text-white font-medium">Response</div>
+            <div className="text-zinc-400 text-sm mt-1">
+              Returns <span className="text-zinc-200 font-mono">&#123; summary, txs &#125;</span>. Summary includes balance/usd/txCount/etc. Txs is a list of recent transfers.
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-white/5 border border-white/10 p-4">
+            <div className="text-white font-medium">cURL</div>
+            <pre className="mt-2 text-xs md:text-sm text-zinc-200 bg-black/30 border border-white/10 rounded-lg p-3 overflow-auto">{`curl -s -X POST https://palechain.sbs/api/lookup \\\n+  -H \"Content-Type: application/json\" \\\n+  -d '{\"query\":\"ADDRESS\",\"network\":\"AUTO\"}'`}</pre>
+            <div className="mt-2 text-xs text-zinc-500">
+              Tip: open <span className="text-zinc-300">/api-docs</span> for a full page version.
+            </div>
+          </div>
+        </div>
+      </GlassModal>
+
       {/* GET STARTED MODAL */}
       <GlassModal
         open={getStartedOpen}
@@ -226,7 +279,7 @@ export function Navbar() {
           </div>
 
           <Link
-            href="https://t.me/oarew"
+            href="/"
             className="inline-block text-sm text-zinc-100 hover:text-white underline underline-offset-4"
           >
             Any questions? <b>Click here</b>

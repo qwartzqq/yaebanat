@@ -44,7 +44,7 @@ function detectInput(raw: string): { kind: Kind; network: Network } {
   if (/^T[a-zA-Z0-9]{33}$/.test(v)) return { kind: "address", network: "TRON" }
 
   // TON (friendly base64url-ish: EQ... / UQ...)
-  if (/^(EQ|UQ)[A-Za-z0-9_-]{40,80}$/.test(v)) return { kind: "address", network: "TON" }
+  if (/^(EQ|UQ|kQ)[A-Za-z0-9_-]{46}$/.test(v)) return { kind: "address", network: "TON" }
 
   // TON raw form: wc:hex
   if (/^-?\d+:[a-fA-F0-9]{64}$/.test(v)) return { kind: "address", network: "TON" }
@@ -178,6 +178,9 @@ function parseTonEvents(events: any[], addrRaw: string): { txs: TonTx[]; totalIn
   let totalIn = 0
   let totalOut = 0
 
+  // Normalize once. TonAPI/tonviewer may return raw addresses in different casing.
+  const addrKey = String(addrRaw || "").trim().toLowerCase()
+
   for (const ev of events) {
     const ts = Number(ev?.timestamp || ev?.time || ev?.utime || 0) || undefined
     const id = String(ev?.event_id || ev?.id || ev?.hash || "")
@@ -209,6 +212,10 @@ function parseTonEvents(events: any[], addrRaw: string): { txs: TonTx[]; totalIn
     const senderNorm = senderRaw ? toRawTonAddress(senderRaw) : ""
     const recipientNorm = recipientRaw ? toRawTonAddress(recipientRaw) : ""
 
+    // Prefer normalized raw addresses, but fall back to raw strings if normalization fails.
+    const senderKey = String(senderNorm || senderRaw || "").trim().toLowerCase()
+    const recipientKey = String(recipientNorm || recipientRaw || "").trim().toLowerCase()
+
     // keep friendly for display where possible
     const senderDisp = senderRaw ? toFriendlyTonAddress(senderRaw) : ""
     const recipientDisp = recipientRaw ? toFriendlyTonAddress(recipientRaw) : ""
@@ -217,10 +224,10 @@ function parseTonEvents(events: any[], addrRaw: string): { txs: TonTx[]; totalIn
     const amountTon = amountNano > 0 ? amountNano / 1e9 : undefined
 
     let kind: TonTx["kind"] = "other"
-    if (recipientNorm && recipientNorm === addrRaw) {
+    if (recipientKey && recipientKey === addrKey) {
       kind = "in"
       if (amountNano > 0) totalIn += amountNano
-    } else if (senderNorm && senderNorm === addrRaw) {
+    } else if (senderKey && senderKey === addrKey) {
       kind = "out"
       if (amountNano > 0) totalOut += amountNano
     }

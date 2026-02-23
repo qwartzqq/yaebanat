@@ -9,6 +9,35 @@ type Props = {
   feed: any[];
 };
 
+// TON addresses can appear in different friendly forms (bounceable/non-bounceable, url-safe, etc.)
+// while pointing to the same raw address. Normalize to raw (workchain:hash) when possible.
+function normalizeTonAddress(input: string): string {
+  const a = String(input || "").trim();
+  if (!a) return "";
+
+  // Raw form like: 0:abcdef...
+  if (a.includes(":")) return a.toLowerCase();
+
+  // Friendly base64/base64url form. Layout: tag(1) + wc(1) + hash(32) + crc16(2)
+  try {
+    const b64 = a.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64.length % 4 === 0 ? "" : "=".repeat(4 - (b64.length % 4));
+    const bin = globalThis.atob(b64 + pad);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (bytes.length < 36) return a.toLowerCase();
+
+    const wcSigned = (bytes[1] << 24) >> 24; // int8
+    const hash = bytes.slice(2, 34);
+    const hex = Array.from(hash)
+      .map((x) => x.toString(16).padStart(2, "0"))
+      .join("");
+    return `${wcSigned}:${hex}`.toLowerCase();
+  } catch {
+    return a.toLowerCase();
+  }
+}
+
 function getTonRow(ev: any, addr: string) {
   const actions = Array.isArray(ev?.actions) ? ev.actions : [];
   const main = actions[0] || {};
@@ -18,8 +47,12 @@ function getTonRow(ev: any, addr: string) {
   const amountNano = Number(main?.ton_transfer?.amount || main?.amount || 0);
   const amount = amountNano ? amountNano / 1e9 : null;
 
-  const isIn = recipient && recipient === addr;
-  const isOut = sender && sender === addr;
+  const normAddr = normalizeTonAddress(addr);
+  const normSender = normalizeTonAddress(sender);
+  const normRecipient = normalizeTonAddress(recipient);
+
+  const isIn = !!(normRecipient && normRecipient === normAddr);
+  const isOut = !!(normSender && normSender === normAddr);
 
   const hash = String(ev?.event_id || ev?.id || ev?.hash || "");
 

@@ -4,6 +4,7 @@ import { Manrope } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import { LenisProvider } from "@/components/providers/lenis-provider"
 import { Navbar } from "@/components/ui/navbar"
+import { BackgroundDecor } from "./components/BackgroundDecor"
 import "./globals.css"
 
 const manrope = Manrope({
@@ -14,9 +15,9 @@ const manrope = Manrope({
 
 
 export const metadata: Metadata = {
-  title: "Liquid Metal Buttons | Premium UI Components",
+  title: "PALE",
   description:
-    "A collection of premium button components featuring animated liquid metal borders powered by Paper Shaders.",
+    "Blockchain Explorer",
   generator: "v0.app",
   icons: {
     icon: [
@@ -51,11 +52,12 @@ export default function RootLayout({
         />
       </head>
       <body className={`${manrope.variable} font-sans antialiased bg-zinc-950 text-zinc-100`}>
-        
-        <Navbar />   {/* ← ВОТ СЮДА */}
+        <BackgroundDecor />
+
+        <Navbar />
 
         <LenisProvider>
-          {children}
+          <div className="relative z-0">{children}</div>
         </LenisProvider>
 
         <Analytics />

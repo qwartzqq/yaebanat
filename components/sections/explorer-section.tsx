@@ -1,7 +1,7 @@
 "use client"
 
-import { useMemo, useState } from "react"
-import { Search, Copy, ExternalLink, Loader2, CheckCircle2, XCircle, Shield, Zap, Blocks, Link2 } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { Search, Copy, ExternalLink, Loader2, CheckCircle2, XCircle, Shield, Zap, Blocks, Link2, MessageSquare, Send, ChevronDown, ChevronUp } from "lucide-react"
 import { LiquidCtaButton } from "@/components/buttons/liquid-cta-button"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -267,7 +267,40 @@ export function ExplorerSection() {
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
 
+const [commentsOpen, setCommentsOpen] = useState(false)
+const [commentsLoading, setCommentsLoading] = useState(false)
+const [commentsError, setCommentsError] = useState<string | null>(null)
+const [comments, setComments] = useState<Array<{ id: string; createdAt: number; text: string }>>([])
+const [canComment, setCanComment] = useState(false)
+const [commentText, setCommentText] = useState("")
+  const [commentNotice, setCommentNotice] = useState<string | null>(null)
+  const [commentsMounted, setCommentsMounted] = useState(false)
+  const [commentsPhase, setCommentsPhase] = useState<"enter" | "exit">("enter")
+
+  // Mobile-friendly collapse for heavy sections
+  const [historyOpen, setHistoryOpen] = useState(true)
+  const [nftsOpen, setNftsOpen] = useState(true)
+  const commentsCloseTimer = useRef<number | null>(null)
+
+
+
   const [forcedNetwork, setForcedNetwork] = useState<Network | "AUTO">("AUTO")
+
+  useEffect(() => {
+    if (commentsOpen) {
+      setCommentsMounted(true)
+      setCommentsPhase("enter")
+      return
+    }
+    if (commentsMounted) {
+      setCommentsPhase("exit")
+      if (commentsCloseTimer.current) window.clearTimeout(commentsCloseTimer.current)
+      commentsCloseTimer.current = window.setTimeout(() => {
+        setCommentsMounted(false)
+      }, 220)
+    }
+  }, [commentsOpen, commentsMounted])
+
 
   const guessed = useMemo(() => {
     if (forcedNetwork !== "AUTO") return { kind: detectInput(q).kind, network: forcedNetwork }
@@ -295,6 +328,76 @@ export function ExplorerSection() {
     }
   }
 
+  function getCommentsKey() {
+    const address = ((res?.normalized || q) ?? "").trim()
+    const network = (res?.network || "UNKNOWN").toString().toUpperCase()
+    return { network, address }
+  }
+
+  async function openComments() {
+    const { network, address } = getCommentsKey()
+    if (!address || network === "UNKNOWN") return
+
+    setCommentsOpen(true)
+    setCommentsError(null)
+    setCommentNotice(null)
+    setCommentsLoading(true)
+
+    try {
+      const r = await fetch(
+        `/api/comments?network=${encodeURIComponent(network)}&address=${encodeURIComponent(address)}`,
+        { cache: "no-store" }
+      )
+      const raw = await r.text()
+      let data: any = null
+      try { data = raw ? JSON.parse(raw) : null } catch {}
+
+      if (!r.ok || !data?.ok) throw new Error(data?.error || `Comments API error (${r.status})`)
+
+      setComments(Array.isArray(data.comments) ? data.comments : [])
+      setCanComment(!!data.canPost)
+    } catch (e: any) {
+      setComments([])
+      setCanComment(false)
+      setCommentsError(e?.message || "Failed to load comments")
+    } finally {
+      setCommentsLoading(false)
+    }
+  }
+
+  async function submitComment() {
+    const { network, address } = getCommentsKey()
+    const text = commentText.trim()
+    if (!text || !address || network === "UNKNOWN") return
+
+    setCommentsError(null)
+    setCommentNotice(null)
+    setCommentsLoading(true)
+
+    try {
+      const r = await fetch("/api/comments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ network, address, text }),
+      })
+      const raw = await r.text()
+      let data: any = null
+      try { data = raw ? JSON.parse(raw) : null } catch {}
+
+      if (!r.ok || !data?.ok) throw new Error(data?.error || `Comments API error (${r.status})`)
+
+      setComments(Array.isArray(data.comments) ? data.comments : [])
+      setCanComment(!!data.canPost)
+      setCommentText("")
+      setCommentNotice("Comment posted.")
+    } catch (e: any) {
+      setCommentsError(e?.message || "Failed to post comment")
+    } finally {
+      setCommentsLoading(false)
+    }
+  }
+
+
   const showStatus = res?.summary?.status
   const statusIcon =
     showStatus === "success" ? <CheckCircle2 className="w-4 h-4" /> : showStatus === "failed" ? <XCircle className="w-4 h-4" /> : null
@@ -303,8 +406,6 @@ export function ExplorerSection() {
     <section className="min-h-screen flex flex-col items-center justify-start px-6 pt-24 pb-20 relative overflow-hidden">
       {/* Background */}
       <div className="absolute inset-0 bg-gradient-to-b from-zinc-900/50 via-transparent to-transparent" />
-      <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[900px] h-[900px] rounded-full blur-3xl opacity-25 bg-gradient-to-tr from-violet-600 via-sky-500 to-emerald-500" />
-      <div className="absolute -bottom-48 right-[-120px] w-[520px] h-[520px] rounded-full blur-3xl opacity-20 bg-gradient-to-tr from-fuchsia-600 via-indigo-500 to-sky-400" />
 
       <div className="relative z-10 w-full max-w-6xl">
         {/* Top badge */}
@@ -559,15 +660,41 @@ export function ExplorerSection() {
                             <div className="text-sm text-zinc-400">Transactions</div>
                             <div className="text-lg font-semibold text-white mt-1">History</div>
                           </div>
-                          <Badge className="rounded-full bg-zinc-950/40 border-zinc-800 text-zinc-300">
-                            {Array.isArray(res.txs) ? res.txs.length : 0}
-                          </Badge>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setHistoryOpen((v) => !v)}
+                              className="px-3 py-1.5 text-xs rounded-full bg-white/5 border border-white/10 text-zinc-200 hover:bg-white/10 transition"
+                              aria-label={historyOpen ? "Collapse history" : "Expand history"}
+                            >
+                              <span className="inline-flex items-center gap-1">
+                                {historyOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                <span className="hidden sm:inline">{historyOpen ? "Hide" : "Show"}</span>
+                              </span>
+                            </button>
+
+                            <button
+                              onClick={openComments}
+                              disabled={!res?.ok || res.kind !== "address" || commentsLoading}
+                              className="px-3 py-1.5 text-xs rounded-full bg-white/5 border border-white/10 text-zinc-200 hover:bg-white/10 disabled:opacity-50 disabled:pointer-events-none transition"
+                            >
+                              Comments
+                            </button>
+
+                            <Badge className="rounded-full bg-zinc-950/40 border-zinc-800 text-zinc-300">
+                              {Array.isArray(res.txs) ? res.txs.length : 0}
+                            </Badge>
+                          </div>
                         </div>
                         <Separator className="my-5 bg-zinc-800/80" />
-                        {Array.isArray(res.txs) && res.txs.length ? (
-                          <TxFeed addr={res.normalized ?? ""} txs={res.txs} />
+                        {historyOpen ? (
+                          Array.isArray(res.txs) && res.txs.length ? (
+                            <TxFeed addr={res.normalized ?? ""} txs={res.txs} />
+                          ) : (
+                            <div className="text-zinc-400 text-sm">No transactions found</div>
+                          )
                         ) : (
-                          <div className="text-zinc-400 text-sm">No transactions found</div>
+                          <div className="text-zinc-500 text-sm">Collapsed</div>
                         )}
                       </Card>
 
@@ -578,15 +705,32 @@ export function ExplorerSection() {
                               <div className="text-sm text-zinc-400">Collectibles</div>
                               <div className="text-lg font-semibold text-white mt-1">NFTs</div>
                             </div>
-                            <Badge className="rounded-full bg-zinc-950/40 border-zinc-800 text-zinc-300">
-                              {Array.isArray(res.nfts) ? res.nfts.length : 0}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setNftsOpen((v) => !v)}
+                                className="px-3 py-1.5 text-xs rounded-full bg-white/5 border border-white/10 text-zinc-200 hover:bg-white/10 transition"
+                                aria-label={nftsOpen ? "Collapse NFTs" : "Expand NFTs"}
+                              >
+                                <span className="inline-flex items-center gap-1">
+                                  {nftsOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                  <span className="hidden sm:inline">{nftsOpen ? "Hide" : "Show"}</span>
+                                </span>
+                              </button>
+
+                              <Badge className="rounded-full bg-zinc-950/40 border-zinc-800 text-zinc-300">
+                                {Array.isArray(res.nfts) ? res.nfts.length : 0}
+                              </Badge>
+                            </div>
                           </div>
                           <Separator className="my-5 bg-zinc-800/80" />
-                          {Array.isArray(res.nfts) && res.nfts.length ? (
-                            <NftGrid nfts={res.nfts} />
+                          {nftsOpen ? (
+                            Array.isArray(res.nfts) && res.nfts.length ? (
+                              <NftGrid nfts={res.nfts} />
+                            ) : (
+                              <div className="text-zinc-400 text-sm">No NFTs found</div>
+                            )
                           ) : (
-                            <div className="text-zinc-400 text-sm">No NFTs found</div>
+                            <div className="text-zinc-500 text-sm">Collapsed</div>
                           )}
                         </Card>
                       ) : null}
@@ -652,7 +796,131 @@ export function ExplorerSection() {
           )}
         </div>
 
-        <div className="mt-14 text-center text-xs text-zinc-500">
+      {commentsMounted ? (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center px-4">
+          <style>{`
+            @keyframes cFadeIn { from { opacity: 0 } to { opacity: 1 } }
+            @keyframes cFadeOut { from { opacity: 1 } to { opacity: 0 } }
+            @keyframes cModalIn {
+              from { opacity: 0; transform: translateY(14px) scale(.98); filter: blur(2px); }
+              to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+            }
+            @keyframes cModalOut {
+              from { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+              to   { opacity: 0; transform: translateY(10px) scale(.985); filter: blur(2px); }
+            }
+          `}</style>
+
+          <div
+            className="absolute inset-0 bg-black/55 backdrop-blur-sm"
+            style={{
+              animation: commentsPhase === "enter" ? "cFadeIn 200ms ease-out" : "cFadeOut 200ms ease-in",
+            }}
+            onClick={() => {
+              setCommentsOpen(false)
+              setCommentsError(null)
+              setCommentNotice(null)
+            }}
+          />
+
+          <div
+            className="relative z-10 w-[760px] max-w-[95%] rounded-2xl bg-white/5 border border-white/10 backdrop-blur-md shadow-[0_20px_60px_rgba(0,0,0,0.6)] p-6 md:p-8"
+            style={{
+              animation:
+                commentsPhase === "enter"
+                  ? "cModalIn 220ms cubic-bezier(.2,.9,.2,1)"
+                  : "cModalOut 220ms ease-in",
+            }}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-2xl font-semibold text-white">Comments</div>
+                <div className="mt-1 text-sm text-zinc-400">Comment section for the {res?.normalized ?? q} wallet</div>
+              </div>
+              <button
+                onClick={() => {
+                  setCommentsOpen(false)
+                  setCommentsError(null)
+                  setCommentNotice(null)
+                }}
+                className="px-3 py-1.5 text-sm rounded-lg bg-white/10 border border-white/10 text-zinc-200 hover:bg-white/15 transition"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-3">
+              {commentsLoading ? (
+                <div className="text-sm text-zinc-400 flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Loading comments…
+                </div>
+              ) : null}
+
+              {commentsError ? (
+                <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                  {commentsError}
+                </div>
+              ) : null}
+
+              {commentNotice ? (
+                <div className="text-sm text-emerald-200 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
+                  {commentNotice}
+                </div>
+              ) : null}
+
+              {!commentsLoading && !commentsError ? (
+                <div className="max-h-[260px] overflow-auto rounded-xl border border-white/10 bg-white/5">
+                  {comments.length === 0 ? (
+                    <div className="p-4 text-sm text-zinc-400">No comments yet. Be the first.</div>
+                  ) : (
+                    <div className="divide-y divide-white/10">
+                      {comments
+                        .slice()
+                        .sort((a, b) => b.createdAt - a.createdAt)
+                        .map((c) => (
+                          <div key={c.id} className="p-4">
+                            <div className="text-xs text-zinc-500">{new Date(c.createdAt).toLocaleString()}</div>
+                            <div className="mt-1 text-sm text-zinc-200 whitespace-pre-wrap break-words">{c.text}</div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              <div className="pt-2">
+                {canComment ? (
+                  <div className="flex flex-col gap-3">
+                    <textarea
+                      value={commentText}
+                      onChange={(e) => setCommentText(e.target.value)}
+                      maxLength={500}
+                      placeholder="Write a comment (max 500 chars)…"
+                      className="w-full min-h-[110px] rounded-xl bg-zinc-950/30 border border-white/10 px-4 py-3 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-white/10"
+                    />
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-xs text-zinc-500">{commentText.length}/500</div>
+                      <button
+                        onClick={submitComment}
+                        disabled={commentsLoading || commentText.trim().length === 0}
+                        className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-zinc-100 text-zinc-900 hover:bg-zinc-200 disabled:opacity-60 disabled:pointer-events-none transition"
+                      >
+                        <Send className="w-4 h-4 mr-2" />
+                        Post comment
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-zinc-400">You have already posted a comment.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+<div className="mt-14 text-center text-xs text-zinc-500">
           Tip: try <span className="text-zinc-300">0x</span>… for ETH, <span className="text-zinc-300">bc1</span>… for BTC, <span className="text-zinc-300">EQ</span>… for TON.
         </div>
       </div>
