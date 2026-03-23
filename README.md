@@ -1,27 +1,20 @@
-# Blockchain Explorer UI (Multi-chain)
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-Run:
+# Run and deploy your AI Studio app
 
-```bash
-npm i
-npm run dev
-```
+This contains everything you need to run your app locally.
 
-## What works out of the box
-- **BTC / ETH / LTC** lookups (address + tx) via **BlockCypher** free endpoints (rate-limited).
-- **TON / TRON** return demo data unless you provide API keys.
+View your app in AI Studio: https://ai.studio/apps/7666458a-669e-4455-9f51-8a3474195da1
 
-## Optional env keys
-Create `.env.local`:
+## Run Locally
 
-```bash
-# TON
-TONCENTER_API_KEY=your_key
-TONCENTER_BASE_URL=https://toncenter.com/api/v2
+**Prerequisites:**  Node.js
 
-# TRON
-TRONGRID_API_KEY=your_key
-TRONGRID_BASE_URL=https://api.trongrid.io
-```
 
-Then restart `npm run dev`.
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`
