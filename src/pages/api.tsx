@@ -324,7 +324,7 @@ export default function ApiPage() {
                     Base URL
                   </div>
                   <div className="font-mono text-sm text-[#7dd3fc]">
-                    http://palechain.sbs
+                    http://localhost:3000
                   </div>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">

@@ -25,7 +25,6 @@ export interface Transaction {
     image?: string;
     description?: string;
     collection?: string;
-    address?: string;
     verified?: boolean;
   };
 }

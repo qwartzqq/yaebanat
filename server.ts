@@ -134,144 +134,6 @@ const getCachedPrice = async (coinId: string): Promise<number> => {
   return priceUsd;
 };
 
-
-async function fetchTonNftMetadata(nftAddress: string): Promise<any | null> {
-  const normalizedAddress = formatTonAddress(nftAddress);
-  const cacheKeys = Array.from(new Set([
-    `nft_meta_${nftAddress}`,
-    `nft_meta_${normalizedAddress}`
-  ]));
-
-  for (const key of cacheKeys) {
-    const cached = getCache(key);
-    if (cached) return cached;
-  }
-
-  try {
-    const response = await dedupeRequest(`nft_meta_fetch_${normalizedAddress}`, () =>
-      axios.get(`https://tonapi.io/v2/nfts/${encodeURIComponent(nftAddress)}`, {
-        headers: TONAPI_HEADERS,
-        timeout: 8000,
-      })
-    );
-
-    const data = response.data;
-    if (data) {
-      for (const key of cacheKeys) setCache(key, data, 3600);
-      return data;
-    }
-  } catch (error: any) {
-    if (error?.response?.status !== 429 && error?.response?.status !== 404) {
-      console.error(`NFT metadata fetch failed for ${nftAddress}:`, error?.message || error);
-    }
-  }
-
-  return null;
-}
-
-async function enrichNftTransfersWithMetadata(transactions: any[], currentNftsMap: Map<string, any>): Promise<any[]> {
-  if (!transactions.length) return transactions;
-
-  const metadataMap = new Map<string, any>();
-  const addressesToFetch = new Set<string>();
-
-  for (const tx of transactions) {
-    if (tx.type !== "NftItemTransfer" || !tx.nftInfo?.address) continue;
-
-    const nftAddress = tx.nftInfo.address;
-    const normalizedAddress = formatTonAddress(nftAddress);
-
-    const hasGoodName = !!tx.nftInfo?.name && tx.nftInfo.name !== "Unnamed NFT" && !/^0:[a-f0-9]{6,}/i.test(tx.nftInfo.name);
-    const hasGoodImage = !!tx.nftInfo?.image;
-    const hasGoodCollection = !!tx.nftInfo?.collection && tx.nftInfo.collection !== "No Collection";
-    const hasGoodDescription = !!tx.nftInfo?.description && tx.nftInfo.description !== "No description available";
-
-    if (hasGoodName && hasGoodImage && (hasGoodCollection || hasGoodDescription)) {
-      continue;
-    }
-
-    const inCurrent = currentNftsMap.get(nftAddress) || currentNftsMap.get(normalizedAddress);
-    if (inCurrent) {
-      metadataMap.set(nftAddress, inCurrent);
-      metadataMap.set(normalizedAddress, inCurrent);
-      continue;
-    }
-
-    const cached = getCache(`nft_meta_${nftAddress}`) || getCache(`nft_meta_${normalizedAddress}`);
-    if (cached) {
-      metadataMap.set(nftAddress, cached);
-      metadataMap.set(normalizedAddress, cached);
-      continue;
-    }
-
-    addressesToFetch.add(nftAddress);
-  }
-
-  for (const nftAddress of Array.from(addressesToFetch).slice(0, 12)) {
-    const meta = await fetchTonNftMetadata(nftAddress);
-    if (meta) {
-      metadataMap.set(nftAddress, meta);
-      metadataMap.set(formatTonAddress(nftAddress), meta);
-    }
-  }
-
-  return transactions.map((tx) => {
-    if (tx.type !== "NftItemTransfer" || !tx.nftInfo?.address) return tx;
-
-    const nftAddress = tx.nftInfo.address;
-    const meta = metadataMap.get(nftAddress) || metadataMap.get(formatTonAddress(nftAddress));
-    if (!meta) return tx;
-
-    const collectionName =
-      meta.collection?.name ||
-      meta.collection_name ||
-      tx.nftInfo?.collection ||
-      "No Collection";
-
-    const image =
-      meta.previews?.find((p: any) => p.resolution === "500x500")?.url ||
-      meta.previews?.find((p: any) => p.resolution === "100x100")?.url ||
-      meta.previews?.[0]?.url ||
-      meta.metadata?.image ||
-      meta.image ||
-      tx.nftInfo?.image ||
-      null;
-
-    const description =
-      meta.metadata?.description ||
-      meta.description ||
-      tx.nftInfo?.description ||
-      "No description available";
-
-    const name =
-      meta.metadata?.name ||
-      meta.name ||
-      meta.dns ||
-      tx.nftInfo?.name ||
-      nftAddress;
-
-    const verified =
-      tx.nftInfo?.verified ??
-      (collectionName === "Telegram Usernames" ||
-        collectionName === "Anonymous Telegram Numbers" ||
-        collectionName === "TON DNS" ||
-        collectionName === "Telegram Numbers");
-
-    return {
-      ...tx,
-      nftInfo: {
-        ...tx.nftInfo,
-        address: formatTonAddress(meta.address || nftAddress),
-        name,
-        image,
-        description,
-        collection: collectionName,
-        verified,
-      }
-    };
-  });
-}
-
 // API Routes
 app.get("/api/detect/:address", (req, res) => {
   const network = detectNetwork(req.params.address);
@@ -372,13 +234,10 @@ async function fetchWalletData(network: string, address: string, cacheKey: strin
     };
 
     if (network === "ton") {
-      // Load account, events, NFT inventory and price together so collectibles count is available immediately
-      const [accountRes, eventsRes, nftsRes, price] = await Promise.all([
+      // ONLY 2 real requests: account + events (price from shared cache, nfts lazy-loaded separately)
+      const [accountRes, eventsRes, price] = await Promise.all([
         axios.get(`https://tonapi.io/v2/accounts/${address}`, { timeout: 8000, headers: TONAPI_HEADERS }),
         axios.get(`https://tonapi.io/v2/accounts/${address}/events?limit=100`, { timeout: 8000, headers: TONAPI_HEADERS }),
-        dedupeRequest(`nfts_ton_${address}_inflight`, () =>
-          axios.get(`https://tonapi.io/v2/accounts/${address}/nfts?limit=100`, { timeout: 8000, headers: TONAPI_HEADERS })
-        ),
         getCachedPrice("the-open-network")  // 0 extra requests if fetched within 2 min
       ]);
 
@@ -433,28 +292,8 @@ async function fetchWalletData(network: string, address: string, cacheKey: strin
         runningBalanceNano = balanceBefore;
       }
 
-      const rawNftItems = nftsRes.data?.nft_items || [];
-      const normalizedNfts = rawNftItems.map((n: any) => ({
-        address: formatTonAddress(n.address),
-        name: n.metadata?.name || n.dns || `NFT #${n.index}`,
-        image: n.previews?.find((p: any) => p.resolution === '500x500')?.url || n.previews?.[0]?.url || n.metadata?.image,
-        description: n.metadata?.description,
-        collection: n.collection?.name,
-        index: n.index,
-        verified: n.collection?.name === "Telegram Usernames" ||
-                  n.collection?.name === "Anonymous Telegram Numbers" ||
-                  n.collection?.name === "TON DNS" ||
-                  n.collection?.name === "Telegram Numbers"
-      }));
-      setCache(`nfts_ton_${address}`, normalizedNfts, 300);
-
+      // NFT map not needed here — nft_item data comes inline from events (NftItemTransfer.nft_item)
       const currentNftsMap = new Map();
-      for (const nft of rawNftItems) {
-        if (nft?.address) {
-          currentNftsMap.set(nft.address, nft);
-          currentNftsMap.set(formatTonAddress(nft.address), nft);
-        }
-      }
 
       const processedTransactions = (await Promise.all(allEvents.map(async (event: any) => {
         // Filter out purely technical events with no value transfer
@@ -467,12 +306,7 @@ async function fetchWalletData(network: string, address: string, cacheKey: strin
 
         if (!hasValueTransfer) return null;
 
-        const action =
-          event.actions.find((a: any) => a.type === "NftItemTransfer") ||
-          event.actions.find((a: any) => a.type === "JettonTransfer") ||
-          event.actions.find((a: any) => a.type === "TonTransfer") ||
-          event.actions.find((a: any) => a.type === "SmartContractExec") ||
-          event.actions[0];
+        const action = event.actions.find((a: any) => a.type === "TonTransfer" || a.type === "JettonTransfer" || a.type === "NftItemTransfer") || event.actions[0];
         
         let amount = "0 TON";
         let from = "N/A";
@@ -514,50 +348,43 @@ async function fetchWalletData(network: string, address: string, cacheKey: strin
           direction = n.recipient?.address === myAddress ? 'in' : 'out';
           comment = n.comment;
           
-          let nftItem = n.nft_item || n.nft;
-          const nftAddress = typeof n.nft === 'string' ? n.nft : (n.nft?.address || n.nft_item?.address);
+          let nftItem = n.nft_item;
+          const nftAddress = n.nft;
 
-          if (nftAddress) {
-            const normalizedLookupAddress = formatTonAddress(nftAddress);
-            if (!nftItem && currentNftsMap.has(nftAddress)) {
+          if (!nftItem && nftAddress) {
+            if (currentNftsMap.has(nftAddress)) {
               nftItem = currentNftsMap.get(nftAddress);
-            }
-            if (!nftItem && currentNftsMap.has(normalizedLookupAddress)) {
-              nftItem = currentNftsMap.get(normalizedLookupAddress);
-            }
-            if (!nftItem) {
-              const cached = getCache(`nft_meta_${nftAddress}`) || getCache(`nft_meta_${normalizedLookupAddress}`);
+            } else {
+              const cacheKey = `nft_meta_${nftAddress}`;
+              const cached = getCache(cacheKey);
               if (cached) {
                 nftItem = cached;
+              } else {
+                // Skip fetching metadata for transactions to avoid massive parallel requests
+                // We'll just use the address as the name if not cached
               }
             }
           }
 
           const nftName = nftItem?.metadata?.name || 
-                          nftItem?.name ||
                           nftItem?.dns || 
                           (nftItem?.index !== undefined && nftItem?.collection ? `${nftItem.collection.name} #${nftItem.index}` : undefined) ||
                           (nftItem?.index !== undefined ? `NFT #${nftItem.index}` : undefined) ||
                           (nftItem?.address ? `${nftItem.address.slice(0, 4)}...${nftItem.address.slice(-4)}` : 
                            (nftAddress ? `${nftAddress.slice(0, 4)}...${nftAddress.slice(-4)}` : "Unnamed NFT"));
-          const normalizedNftAddress = nftItem?.address ? formatTonAddress(nftItem.address) : (nftAddress ? formatTonAddress(nftAddress) : undefined);
 
-          const nftCollectionName = nftItem?.collection?.name || nftItem?.collection_name || "No Collection";
-          const isOfficial = nftCollectionName === "Telegram Usernames" || 
-                             nftCollectionName === "Anonymous Telegram Numbers" ||
-                             nftCollectionName === "TON DNS" ||
-                             nftCollectionName === "Telegram Numbers";
+          const isOfficial = nftItem?.collection?.name === "Telegram Usernames" || 
+                             nftItem?.collection?.name === "Anonymous Telegram Numbers" ||
+                             nftItem?.collection?.name === "TON DNS" ||
+                             nftItem?.collection?.name === "Telegram Numbers";
 
           nftInfo = {
             name: nftName,
-            image: nftItem?.previews?.find((p: any) => p.resolution === '500x500')?.url ||
-                   nftItem?.previews?.find((p: any) => p.resolution === '100x100')?.url || 
+            image: nftItem?.previews?.find((p: any) => p.resolution === '100x100')?.url || 
                    nftItem?.previews?.[0]?.url || 
-                   nftItem?.metadata?.image ||
-                   nftItem?.image,
-            description: nftItem?.metadata?.description || nftItem?.description || "No description available",
-            collection: nftCollectionName,
-            address: normalizedNftAddress,
+                   nftItem?.metadata?.image,
+            description: nftItem?.metadata?.description,
+            collection: nftItem?.collection?.name,
             verified: isOfficial
           };
         } else if (action.type === "SmartContractExec") {
@@ -590,14 +417,12 @@ async function fetchWalletData(network: string, address: string, cacheKey: strin
         };
       }))).filter(tx => tx !== null);
 
-      const enrichedTransactions = await enrichNftTransfersWithMetadata(processedTransactions, currentNftsMap);
-
       data = {
         address: formatTonAddress(myAddress), // Return the canonical address in user-friendly format
         balance: `${balance} TON`,
         usdValue: parseFloat(balance) * price,
-        transactions: enrichedTransactions,
-        nfts: normalizedNfts,
+        transactions: processedTransactions,
+        nfts: [], // Loaded lazily via GET /api/nfts/ton/:address when Collectibles tab opens
         stats: {
           totalReceived: (Number(totalReceivedNano) / 1e9).toFixed(2) + " TON",
           totalSent: (Number(totalSentNano) / 1e9).toFixed(2) + " TON",
